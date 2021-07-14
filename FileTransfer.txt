@@ -1,0 +1,44 @@
+PolarisRequestBrandConfigCache.gs
+
+function getPolarisConfiguredBrands(product: Product_Ext, polarisTransaction: PolarisTransaction_Ext): BrandCode_Ext[] {
+    return get().firstWhere(\polarisConfig -> polarisConfig.Product_Prop == product).AssociatedPolarisTransactions
+        .firstWhere(\transaction -> transaction.PolarisTransaction_Prop == polarisTransaction).AssociatedBrands
+        .where(\brand -> brand.IsAvailable_Prop).Brand_Prop
+  }
+  
+RatingGateway.gs
+
+private static property get PanelLookupConfiguration():
+      List<Tuple2<typekey.Job, block(pp: PolicyPeriod): entity.BrandLookup_Ext[]>> {
+
+    var newTuple2 = \jobType: typekey.Job, extractor: block(pp: PolicyPeriod): entity.BrandLookup_Ext[] ->
+        new Tuple2<typekey.Job, block(pp: PolicyPeriod): entity.BrandLookup_Ext[]>(jobType, extractor)
+
+    return {
+        newTuple2(TC_SUBMISSION,
+            \pp: PolicyPeriod -> BrandLookup_Ext.finder
+                .findPanel(pp.ProducerCodeOfRecord.Organization.Type.Description, pp.ProducerCodeOfRecord, pp.Policy.Product.Abbreviation)),
+        newTuple2(TC_RENEWAL,
+            \pp: PolicyPeriod -> {
+              var allBrandLookUps = BrandLookup_Ext.finder
+                  .findPanel(pp.ProducerCodeOfRecord.Organization.Type.Description, pp.ProducerCodeOfRecord, pp.Policy.Product.Abbreviation)
+              return filterBrandLookUp(allBrandLookUps, pp)
+            })
+    }
+  }
+
+  private static function filterBrandLookUp(brandLookUps: BrandLookup_Ext[], period: PolicyPeriod): BrandLookup_Ext[] {
+    if (period.PrivateCarLine_ExtExists) {
+      var brands = PolarisRequestBrandConfigCache.Instance
+          .getPolarisConfiguredBrands(Product_Ext.TC_PRIVATECAR_EXT, PolarisTransaction_Ext.TC_AUTOREBROKE)
+      var regExp = getBrandMatchRegularExpression(brands)
+      brandLookUps.PolarisScheme.where(\schema -> schema.matches(regExp))
+    }
+    return brandLookUps.where(\brandLookUp -> brandLookUp.PolarisScheme.startsWith(period.BrandCode_Ext.Code))
+  }
+
+  private static function getBrandMatchRegularExpression(brands : BrandCode_EXT[]) : String {
+    var regExp = "(replace_here).*"
+    regExp = regExp.replaceFirst("replace_here", brands.Code.join("|"))
+    return regExp
+  }
